@@ -1,7 +1,11 @@
 import threading
 import time as mod_time
 import uuid
-from redis.exceptions import LockError, WatchError
+from redis.exceptions import (LockError,
+                              LockExtendError,
+                              LockReleaseError,
+                              WatchError,
+                              )
 from redis.utils import dummy
 from redis._compat import b
 
@@ -15,7 +19,8 @@ class Lock(object):
     multiple clients play nicely together.
     """
     def __init__(self, redis, name, timeout=None, sleep=0.1,
-                 blocking=True, blocking_timeout=None, thread_local=True):
+                 blocking=True, blocking_timeout=None, thread_local=True,
+                 suppress_lock_timeout_error=None, ):
         """
         Create a new Lock instance named ``name`` using the Redis client
         supplied by ``redis``.
@@ -65,6 +70,10 @@ class Lock(object):
         the token set by the thread that acquired the lock. Our assumption
         is that these cases aren't common and as such default to using
         thread local storage.
+        
+        ``suppress_lock_timeout_error`` default to None.  When `True`, a 
+        `LockReleaseError` will not be raised if the lock has disappeared on 
+        release.
         """
         self.redis = redis
         self.name = name
@@ -77,6 +86,7 @@ class Lock(object):
         self.local.token = None
         if self.timeout and self.sleep > self.timeout:
             raise LockError("'sleep' must be less than 'timeout'")
+        self.suppress_lock_timeout_error = suppress_lock_timeout_error
 
     def __enter__(self):
         # force blocking, as otherwise the user would have to check whether
@@ -130,7 +140,9 @@ class Lock(object):
         "Releases the already acquired lock"
         expected_token = self.local.token
         if expected_token is None:
-            raise LockError("Cannot release an unlocked lock")
+            if self.suppress_lock_timeout_error:
+                return
+            raise LockReleaseError("Cannot release an unlocked lock")
         self.local.token = None
         self.do_release(expected_token)
 
@@ -140,7 +152,9 @@ class Lock(object):
         def execute_release(pipe):
             lock_value = pipe.get(name)
             if lock_value != expected_token:
-                raise LockError("Cannot release a lock that's no longer owned")
+                if self.suppress_lock_timeout_error:
+                    return
+                raise LockReleaseError("Cannot release a lock that's no longer owned")
             pipe.delete(name)
 
         self.redis.transaction(execute_release, name)
@@ -153,9 +167,9 @@ class Lock(object):
         representing the number of seconds to add.
         """
         if self.local.token is None:
-            raise LockError("Cannot extend an unlocked lock")
+            raise LockExtendError("Cannot extend an unlocked lock")
         if self.timeout is None:
-            raise LockError("Cannot extend a lock with no timeout")
+            raise LockExtendError("Cannot extend a lock with no timeout")
         return self.do_extend(additional_time)
 
     def do_extend(self, additional_time):
@@ -163,7 +177,7 @@ class Lock(object):
         pipe.watch(self.name)
         lock_value = pipe.get(self.name)
         if lock_value != self.local.token:
-            raise LockError("Cannot extend a lock that's no longer owned")
+            raise LockExtendError("Cannot extend a lock that's no longer owned")
         expiration = pipe.pttl(self.name)
         if expiration is None or expiration < 0:
             # Redis evicted the lock key between the previous get() and now
@@ -176,10 +190,10 @@ class Lock(object):
             response = pipe.execute()
         except WatchError:
             # someone else acquired the lock
-            raise LockError("Cannot extend a lock that's no longer owned")
+            raise LockExtendError("Cannot extend a lock that's no longer owned")
         if not response[0]:
             # pexpire returns False if the key doesn't exist
-            raise LockError("Cannot extend a lock that's no longer owned")
+            raise LockExtendError("Cannot extend a lock that's no longer owned")
         return True
 
 
@@ -261,12 +275,14 @@ class LuaLock(Lock):
         if not bool(self.lua_release(keys=[self.name],
                                      args=[expected_token],
                                      client=self.redis)):
-            raise LockError("Cannot release a lock that's no longer owned")
+            if self.suppress_lock_timeout_error:
+                return
+            raise LockReleaseError("Cannot release a lock that's no longer owned")
 
     def do_extend(self, additional_time):
         additional_time = int(additional_time * 1000)
         if not bool(self.lua_extend(keys=[self.name],
                                     args=[self.local.token, additional_time],
                                     client=self.redis)):
-            raise LockError("Cannot extend a lock that's no longer owned")
+            raise LockExtendError("Cannot extend a lock that's no longer owned")
         return True

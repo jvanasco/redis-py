@@ -1,6 +1,11 @@
 * 2.10.6 (in development)
     * Socket timeouts when connecting to a server are now properly raised
       as TimeoutErrors.
+    * Added `exceptions.LockReleaseError` and `exceptions.LockExtendError`
+    * Added config options of `suppress_lock_timeout_error` to `Redis()` and
+      `Lock()`, this will conditionally suppress errors on lock release when the
+      lock value has disappeared or a new lock has been established by a
+      different process.
 * 2.10.5
     * Allow URL encoded parameters in Redis URLs. Characters like a "/" can
       now be URL encoded and redis-py will correctly decode them. Thanks

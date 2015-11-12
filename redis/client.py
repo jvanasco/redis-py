@@ -401,7 +401,7 @@ class StrictRedis(object):
                  decode_responses=False, retry_on_timeout=False,
                  ssl=False, ssl_keyfile=None, ssl_certfile=None,
                  ssl_cert_reqs=None, ssl_ca_certs=None,
-                 max_connections=None):
+                 max_connections=None, suppress_lock_timeout_error=None):
         if not connection_pool:
             if charset is not None:
                 warnings.warn(DeprecationWarning(
@@ -451,6 +451,7 @@ class StrictRedis(object):
         self._use_lua_lock = None
 
         self.response_callbacks = self.__class__.RESPONSE_CALLBACKS.copy()
+        self.suppress_lock_timeout_error = suppress_lock_timeout_error
 
     def __repr__(self):
         return "%s<%s>" % (type(self).__name__, repr(self.connection_pool))
@@ -552,7 +553,8 @@ class StrictRedis(object):
             lock_class = self._use_lua_lock and LuaLock or Lock
         return lock_class(self, name, timeout=timeout, sleep=sleep,
                           blocking_timeout=blocking_timeout,
-                          thread_local=thread_local)
+                          thread_local=thread_local, suppress_lock_timeout_error
+                          =self.suppress_lock_timeout_error, )
 
     def pubsub(self, **kwargs):
         """

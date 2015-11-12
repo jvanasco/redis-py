@@ -65,7 +65,17 @@ class ReadOnlyError(ResponseError):
 
 
 class LockError(RedisError, ValueError):
-    "Errors acquiring or releasing a lock"
+    "Errors acquiring, releasing, or extending a lock"
     # NOTE: For backwards compatability, this class derives from ValueError.
     # This was originally chosen to behave like threading.Lock.
+    pass
+
+
+class LockExtendError(LockError):
+    "Errors specifically extending a lock"
+    pass
+
+
+class LockReleaseError(LockError):
+    "Errors specifically releasing a lock"
     pass
